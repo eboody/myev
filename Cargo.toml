@@ -8,7 +8,8 @@ edition = "2021"
 [dependencies]
 evdev = { version = "0.12.1", features = ["serde", "tokio"] }
 tokio = { version = "1.37.0", features = ["macros", "rt-multi-thread", "time"] }
-libudev = { version = "*" }
-uinput = "0.1.3"
-nix = "0.28.0"
-evdev-rs = "0.6.1"
+# libudev = { version = "*" }
+# uinput = "0.1.3"
+# nix = "0.28.0"
+# evdev-rs = { version = "0.6.1", features = ["serde"] }
+# libc = "0.2.153"
