@@ -50,20 +50,37 @@ async fn main() -> std::io::Result<()> {
     loop {
         for event in physical_device.fetch_events()?.into_iter() {
             if event.code() == caps_remap.key.code() {
-                if event.value() == 2 {
-                    caps_remap.held = true;
-                    println!("held caps");
-                }
-                if event.value() == 0 {
-                    println!("released caps");
-                    caps_remap.held = false;
-                } else if !caps_remap.held {
-                    println!("pressed caps");
-                }
+                let code = match event.value() {
+                    2 => {
+                        caps_remap.held = true;
+                        caps_remap.on_hold
+                    }
+                    0 => {
+                        caps_remap.held = false;
+                        if caps_remap.held {
+                            caps_remap.on_hold
+                        } else {
+                            virtual_device.emit(&[InputEvent::new(
+                                event.event_type(),
+                                caps_remap.on_hold.code(),
+                                0,
+                            )])?;
+                            virtual_device.emit(&[InputEvent::new(
+                                event.event_type(),
+                                caps_remap.on_tap.code(),
+                                1,
+                            )])?;
+
+                            caps_remap.on_tap
+                        }
+                    }
+                    1 => caps_remap.on_hold,
+                    _ => Key::KEY_RESERVED,
+                };
 
                 virtual_device.emit(&[InputEvent::new(
                     event.event_type(),
-                    caps_remap.on_tap.code(),
+                    code.code(),
                     event.value(),
                 )])?;
             } else {
