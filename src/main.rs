@@ -1,7 +1,4 @@
-use evdev::{
-    uinput::VirtualDeviceBuilder, AttributeSet, EventType, InputEvent, InputEventKind, Key,
-    MiscType, SwitchType,
-};
+use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, InputEvent, Key};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -48,7 +45,6 @@ async fn main() -> std::io::Result<()> {
         on_tap: Key::KEY_ESC,
         on_hold: Key::KEY_LEFTMETA,
         held: false,
-        interupted: false,
     };
 
     loop {
@@ -73,6 +69,7 @@ async fn main() -> std::io::Result<()> {
                                 caps_remap.on_hold.code(),
                                 0,
                             )])?;
+
                             virtual_device.emit(&[InputEvent::new(
                                 event.event_type(),
                                 caps_remap.on_tap.code(),
@@ -93,9 +90,6 @@ async fn main() -> std::io::Result<()> {
                     event.value(),
                 )])?;
             } else {
-                if caps_remap.held {
-                    caps_remap.interupted = true;
-                }
                 virtual_device.emit(&[event])?;
             }
         }
@@ -132,5 +126,4 @@ struct KeyConfig {
     on_tap: Key,
     on_hold: Key,
     held: bool,
-    interupted: bool,
 }
