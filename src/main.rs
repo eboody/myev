@@ -1,4 +1,4 @@
-use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, Key};
+use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, InputEvent, InputEventKind, Key};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -40,10 +40,35 @@ async fn main() -> std::io::Result<()> {
     //prevent physical device from sending events so that the virtual one can handle everything
     physical_device.grab()?;
 
+    let mut caps_remap = KeyConfig {
+        key: Key::KEY_CAPSLOCK,
+        on_tap: Key::KEY_ESC,
+        on_hold: Key::KEY_LEFTMETA,
+        held: false,
+    };
+
     loop {
         for event in physical_device.fetch_events()?.into_iter() {
-            virtual_device.emit(&[event])?;
-            // println!("{event:#?}");
+            if event.code() == caps_remap.key.code() {
+                if event.value() == 2 {
+                    caps_remap.held = true;
+                    println!("held caps");
+                }
+                if event.value() == 0 {
+                    println!("released caps");
+                    caps_remap.held = false;
+                } else if !caps_remap.held {
+                    println!("pressed caps");
+                }
+
+                virtual_device.emit(&[InputEvent::new(
+                    event.event_type(),
+                    caps_remap.on_tap.code(),
+                    event.value(),
+                )])?;
+            } else {
+                virtual_device.emit(&[event])?;
+            }
         }
         sleep(Duration::from_millis(10)).await;
     }
@@ -70,4 +95,11 @@ pub fn pick_device() -> evdev::Device {
         let n = chosen.trim().parse::<usize>().unwrap();
         devices.into_iter().nth(n).unwrap()
     }
+}
+
+struct KeyConfig {
+    key: Key,
+    on_tap: Key,
+    on_hold: Key,
+    held: bool,
 }
