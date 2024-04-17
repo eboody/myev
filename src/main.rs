@@ -1,6 +1,6 @@
 use evdev::{
     uinput::VirtualDeviceBuilder, AttributeSet, EventType, InputEvent, InputEventKind, Key,
-    MiscType, SwitchType, Synchronization,
+    MiscType, SwitchType,
 };
 use std::time::Duration;
 use tokio::time::sleep;
@@ -56,33 +56,30 @@ async fn main() -> std::io::Result<()> {
             if event.code() == caps_remap.key.code() {
                 let code = match event.value() {
                     2 => {
-                        caps_remap.held = true;
-                        caps_remap.on_hold
-                    }
-                    0 => {
-                        caps_remap.held = false;
-
-                        if caps_remap.interupted {
-                            // caps_remap.interupted = false;
-                            // virtual_device.emit(&[InputEvent::new(
-                            //     event.event_type(),
-                            //     caps_remap.on_hold.code(),
-                            //     0,
-                            // )])?;
-                            // continue;
-                        }
-
-                        if caps_remap.held {
+                        if !caps_remap.held {
+                            caps_remap.held = true;
                             caps_remap.on_hold
                         } else {
-                            println!("{caps_remap:#?}");
-                            println!("{event:#?}");
+                            Key::KEY_RESERVED
+                        }
+                    }
+                    0 => {
+                        if caps_remap.held {
+                            caps_remap.held = false;
+                            caps_remap.on_hold
+                        } else {
                             virtual_device.emit(&[InputEvent::new(
                                 event.event_type(),
                                 caps_remap.on_hold.code(),
                                 0,
                             )])?;
+                            virtual_device.emit(&[InputEvent::new(
+                                event.event_type(),
+                                caps_remap.on_tap.code(),
+                                1,
+                            )])?;
 
+                            sleep(Duration::from_millis(10)).await;
                             caps_remap.on_tap
                         }
                     }
@@ -102,7 +99,7 @@ async fn main() -> std::io::Result<()> {
                 virtual_device.emit(&[event])?;
             }
         }
-        // sleep(Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(10)).await;
     }
 }
 
