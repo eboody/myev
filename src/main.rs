@@ -1,12 +1,14 @@
 use evdev::{
     uinput::{VirtualDevice, VirtualDeviceBuilder},
-    AttributeSet, Device, InputEvent, Key,
+    AttributeSet, Device, InputEvent, InputEventKind, Key, MiscType,
 };
 use std::{
     io,
     time::{Duration, SystemTime},
 };
 use tokio::time::sleep;
+
+static HOLD_TIMEOUT: Duration = Duration::from_millis(200);
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -58,7 +60,6 @@ fn initialize_key_config() -> Vec<KeyConfig> {
         key: Key::KEY_CAPSLOCK,
         on_tap: Key::KEY_ESC,
         on_hold: Key::KEY_LEFTMETA,
-        held: false,
         interrupted: false,
         time_pressed: None,
     }]
@@ -71,9 +72,7 @@ async fn event_loop(
 ) -> io::Result<()> {
     loop {
         for event in physical_device.fetch_events()?.into_iter() {
-            for key_config in &mut key_configs {
-                handle_event(event, key_config, virtual_device).await?;
-            }
+            handle_event(event, &mut key_configs, virtual_device).await?;
         }
         sleep(Duration::from_millis(10)).await;
     }
@@ -81,21 +80,37 @@ async fn event_loop(
 
 async fn handle_event(
     event: InputEvent,
-    config: &mut KeyConfig,
+    key_configs: &mut Vec<KeyConfig>,
     device: &mut VirtualDevice,
 ) -> io::Result<()> {
-    if event.code() == config.key.code() {
-        process_capslock_event(event, config, device).await?;
-    } else {
-        if config.held {
-            config.interrupted = true;
+    // if event is in KeyConfigs then handle it
+    for config in &mut *key_configs {
+        if event.code() == config.key.code() {
+            process_custom_key_event(event, config, device).await?;
+            return Ok(());
         }
-        device.emit(&[event])?;
     }
+
+    // if event is not in keyconfigs, but a keyconfig is held down, set it to interrupted
+    for config in key_configs {
+        if config.time_pressed.is_some() {
+            if event.kind() != InputEventKind::Misc(MiscType::MSC_SCAN)
+                || event.kind()
+                    != InputEventKind::Synchronization(evdev::Synchronization::SYN_REPORT)
+            {
+                // println!("{event:#?}");
+                config.interrupted = true;
+            }
+        }
+    }
+
+    //otherwise just pass the event through
+    device.emit(&[event])?;
+
     Ok(())
 }
 
-async fn process_capslock_event(
+async fn process_custom_key_event(
     event: InputEvent,
     config: &mut KeyConfig,
     device: &mut VirtualDevice,
@@ -104,30 +119,27 @@ async fn process_capslock_event(
         1 => {
             emit_key_event(device, config.on_hold, 1).await?;
             config.time_pressed = Some(SystemTime::now());
-            config.held = true;
         }
         0 => {
+            let duration_held = SystemTime::now()
+                .duration_since(config.time_pressed.unwrap())
+                .unwrap();
+
+            emit_key_event(device, config.on_hold, 0).await?;
+
+            if duration_held < HOLD_TIMEOUT {
+                if !config.interrupted {
+                    emit_key_event(device, config.on_tap, 1).await?;
+                    sleep(Duration::from_millis(10)).await;
+                    emit_key_event(device, config.on_tap, 0).await?;
+                }
+            }
             config.time_pressed = None;
-            config.held = false;
-            await_key_release(config, device).await?
+            config.interrupted = false;
         }
         _ => {}
     }
-    Ok(())
-}
-
-async fn await_key_release(config: &mut KeyConfig, device: &mut VirtualDevice) -> io::Result<()> {
-    if config.held {
-        config.held = false;
-        emit_key_event(device, config.on_hold, 0).await?;
-        return Ok(());
-    }
-    if !config.interrupted {
-        emit_key_event(device, config.on_tap, 1).await?;
-        emit_key_event(device, config.on_tap, 0).await?;
-    } else {
-        config.interrupted = false;
-    }
+    // println!("{config:#?}");
     Ok(())
 }
 
@@ -140,7 +152,6 @@ struct KeyConfig {
     key: Key,
     on_tap: Key,
     on_hold: Key,
-    held: bool,
     interrupted: bool,
     time_pressed: Option<SystemTime>,
 }
