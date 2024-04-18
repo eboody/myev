@@ -1,6 +1,15 @@
-use evdev::{uinput::VirtualDeviceBuilder, AttributeSet, InputEvent, Key};
-use std::time::Duration;
+use evdev::{
+    uinput::{VirtualDevice, VirtualDeviceBuilder},
+    AttributeSet, InputEvent, Key,
+};
+use std::{
+    io,
+    time::{Duration, SystemTime},
+};
 use tokio::time::sleep;
+
+static DOUBLE_TAP_TIMEOUT: Duration = Duration::from_millis(150);
+static LONG_PRESS_TIMEOUT: Duration = Duration::from_millis(200);
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -34,62 +43,93 @@ async fn main() -> std::io::Result<()> {
         println!("Virtual device available as {}", path.display());
     }
 
-    //a second to process new device
-    sleep(Duration::from_secs(1)).await;
-
     //prevent physical device from sending events so that the virtual one can handle everything
     physical_device.grab()?;
+
+    //a second to process new device
+    sleep(Duration::from_secs(1)).await;
 
     let mut caps_remap = KeyConfig {
         key: Key::KEY_CAPSLOCK,
         on_tap: Key::KEY_ESC,
         on_hold: Key::KEY_LEFTMETA,
         held: false,
+        start_time: SystemTime::UNIX_EPOCH,
     };
+
+    let mut interrupted = false;
 
     loop {
         for event in physical_device.fetch_events()?.into_iter() {
             if event.code() == caps_remap.key.code() {
-                let code = match event.value() {
-                    2 => {
-                        if !caps_remap.held {
-                            caps_remap.held = true;
-                            caps_remap.on_hold
-                        } else {
-                            Key::KEY_RESERVED
-                        }
-                    }
-                    0 => {
-                        if caps_remap.held {
-                            caps_remap.held = false;
-                            caps_remap.on_hold
-                        } else {
-                            virtual_device.emit(&[InputEvent::new(
-                                event.event_type(),
-                                caps_remap.on_hold.code(),
-                                0,
-                            )])?;
+                if caps_remap.start_time == SystemTime::UNIX_EPOCH {
+                    caps_remap.start_time = SystemTime::now();
+                }
 
-                            virtual_device.emit(&[InputEvent::new(
-                                event.event_type(),
-                                caps_remap.on_tap.code(),
-                                1,
-                            )])?;
+                if event.value() == 0 && caps_remap.start_time != SystemTime::UNIX_EPOCH {
+                    caps_remap.start_time = SystemTime::UNIX_EPOCH;
+                    key_up(&mut virtual_device, caps_remap.on_hold)?;
+                    key_up(&mut virtual_device, caps_remap.on_tap)?;
+                    continue;
+                }
 
-                            sleep(Duration::from_millis(10)).await;
-                            caps_remap.on_tap
-                        }
-                    }
-                    1 => caps_remap.on_hold,
-                    _ => Key::KEY_RESERVED,
+                let duration_held = SystemTime::now()
+                    .duration_since(caps_remap.start_time)
+                    .map_err(|_| io::Error::last_os_error())?;
+                println!("{:#?}", duration_held.as_millis());
+
+                let key = if duration_held.as_millis() > LONG_PRESS_TIMEOUT.as_millis() {
+                    caps_remap.on_hold
+                } else {
+                    caps_remap.on_tap
                 };
+
+                // let key = match event.value() {
+                //     2 => {
+                //         if !caps_remap.held {
+                //             caps_remap.held = true;
+                //             caps_remap.on_hold
+                //         } else {
+                //             Key::KEY_RESERVED
+                //         }
+                //     }
+                //     0 => {
+                //         if caps_remap.held {
+                //             caps_remap.held = false;
+                //             caps_remap.on_hold
+                //         } else {
+                //             key_up(&mut virtual_device, caps_remap.on_hold)?;
+                //
+                //             if !interrupted {
+                //                 key_down(&mut virtual_device, caps_remap.on_tap)?;
+                //                 sleep(Duration::from_millis(10)).await;
+                //                 caps_remap.on_tap
+                //             } else {
+                //                 println!("not interrupted");
+                //                 interrupted = false;
+                //                 Key::KEY_RESERVED
+                //             }
+                //         }
+                //     }
+                //     1 => {
+                //         caps_remap.start_time = event.timestamp();
+                //         caps_remap.on_hold
+                //     }
+                //     _ => Key::KEY_RESERVED,
+                // };
 
                 virtual_device.emit(&[InputEvent::new(
                     event.event_type(),
-                    code.code(),
+                    key.code(),
                     event.value(),
                 )])?;
             } else {
+                if caps_remap.held {
+                    interrupted = true;
+                    println!("{event:#?}");
+                    println!("interrupted");
+                }
+
                 virtual_device.emit(&[event])?;
             }
         }
@@ -126,4 +166,14 @@ struct KeyConfig {
     on_tap: Key,
     on_hold: Key,
     held: bool,
+    start_time: SystemTime,
+}
+
+fn key_down(d: &mut VirtualDevice, key: Key) -> std::io::Result<()> {
+    d.emit(&[InputEvent::new(evdev::EventType(0x01), key.code(), 1)])?;
+    Ok(())
+}
+fn key_up(d: &mut VirtualDevice, key: Key) -> std::io::Result<()> {
+    d.emit(&[InputEvent::new(evdev::EventType(0x01), key.code(), 0)])?;
+    Ok(())
 }
