@@ -1,6 +1,6 @@
 use evdev::{
     uinput::{VirtualDevice, VirtualDeviceBuilder},
-    AttributeSet, InputEvent, Key,
+    AttributeSet, Device, InputEvent, Key,
 };
 use std::{
     io,
@@ -8,136 +8,144 @@ use std::{
 };
 use tokio::time::sleep;
 
-static DOUBLE_TAP_TIMEOUT: Duration = Duration::from_millis(150);
-static LONG_PRESS_TIMEOUT: Duration = Duration::from_millis(200);
-
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    let mut physical_device = pick_device();
+async fn main() -> io::Result<()> {
+    let mut physical_device = pick_device().await;
+    let supported_keys = gather_supported_keys(&physical_device)?;
+    let mut virtual_device = create_virtual_device(&supported_keys).await?;
 
-    // Initialize an empty AttributeSet<Key> to store the supported keys
+    prevent_physical_device_input(&mut physical_device).await?;
+
+    let key_configs = initialize_key_config();
+
+    event_loop(&mut physical_device, &mut virtual_device, key_configs).await
+}
+
+fn gather_supported_keys(device: &Device) -> io::Result<AttributeSet<Key>> {
     let mut keys = AttributeSet::<Key>::new();
-
-    // If the device supports keys, iterate over them and add to the 'keys' set
-    if let Some(supported_keys) = physical_device.supported_keys() {
-        supported_keys.iter().for_each(|device_key| {
-            // Insert a new Key based on the numeric value of the device_key
-            keys.insert(Key::new(device_key.code()));
+    if let Some(supported_keys) = device.supported_keys() {
+        supported_keys.iter().for_each(|k| {
+            keys.insert(Key::new(k.code()));
         });
     }
+    Ok(keys)
+}
 
-    // For demonstration, print out the numeric values of the keys we just added
-    println!("Available Keys:");
-    for key in keys.iter() {
-        println!("  {:#?}", key);
-    }
-
+async fn create_virtual_device(supported_keys: &AttributeSet<Key>) -> io::Result<VirtualDevice> {
     let mut virtual_device = VirtualDeviceBuilder::new()?
         .name("Virtual Keyboard")
-        .with_keys(&keys)?
-        .build()
-        .unwrap();
+        .with_keys(supported_keys)?
+        .build()?;
+    announce_virtual_device(&mut virtual_device)?;
+    Ok(virtual_device)
+}
 
-    for path in virtual_device.enumerate_dev_nodes_blocking()? {
-        let path = path?;
-        println!("Virtual device available as {}", path.display());
+fn announce_virtual_device(device: &mut VirtualDevice) -> io::Result<()> {
+    for path in device.enumerate_dev_nodes_blocking()? {
+        println!("Virtual device available as {}", path?.display());
     }
+    Ok(())
+}
 
-    //prevent physical device from sending events so that the virtual one can handle everything
-    physical_device.grab()?;
-
-    //a second to process new device
+async fn prevent_physical_device_input(device: &mut Device) -> io::Result<()> {
+    device.grab()?;
     sleep(Duration::from_secs(1)).await;
+    Ok(())
+}
 
-    let mut caps_remap = KeyConfig {
+fn initialize_key_config() -> Vec<KeyConfig> {
+    vec![KeyConfig {
         key: Key::KEY_CAPSLOCK,
         on_tap: Key::KEY_ESC,
         on_hold: Key::KEY_LEFTMETA,
         held: false,
-        start_time: SystemTime::UNIX_EPOCH,
-    };
+        interrupted: false,
+        time_pressed: None,
+    }]
+}
 
-    let mut interrupted = false;
-
+async fn event_loop(
+    physical_device: &mut Device,
+    virtual_device: &mut VirtualDevice,
+    mut key_configs: Vec<KeyConfig>,
+) -> io::Result<()> {
     loop {
         for event in physical_device.fetch_events()?.into_iter() {
-            if event.code() == caps_remap.key.code() {
-                if caps_remap.start_time == SystemTime::UNIX_EPOCH {
-                    caps_remap.start_time = SystemTime::now();
-                }
-
-                if event.value() == 0 && caps_remap.start_time != SystemTime::UNIX_EPOCH {
-                    caps_remap.start_time = SystemTime::UNIX_EPOCH;
-                    key_up(&mut virtual_device, caps_remap.on_hold)?;
-                    key_up(&mut virtual_device, caps_remap.on_tap)?;
-                    continue;
-                }
-
-                let duration_held = SystemTime::now()
-                    .duration_since(caps_remap.start_time)
-                    .map_err(|_| io::Error::last_os_error())?;
-                println!("{:#?}", duration_held.as_millis());
-
-                let key = if duration_held.as_millis() > LONG_PRESS_TIMEOUT.as_millis() {
-                    caps_remap.on_hold
-                } else {
-                    caps_remap.on_tap
-                };
-
-                // let key = match event.value() {
-                //     2 => {
-                //         if !caps_remap.held {
-                //             caps_remap.held = true;
-                //             caps_remap.on_hold
-                //         } else {
-                //             Key::KEY_RESERVED
-                //         }
-                //     }
-                //     0 => {
-                //         if caps_remap.held {
-                //             caps_remap.held = false;
-                //             caps_remap.on_hold
-                //         } else {
-                //             key_up(&mut virtual_device, caps_remap.on_hold)?;
-                //
-                //             if !interrupted {
-                //                 key_down(&mut virtual_device, caps_remap.on_tap)?;
-                //                 sleep(Duration::from_millis(10)).await;
-                //                 caps_remap.on_tap
-                //             } else {
-                //                 println!("not interrupted");
-                //                 interrupted = false;
-                //                 Key::KEY_RESERVED
-                //             }
-                //         }
-                //     }
-                //     1 => {
-                //         caps_remap.start_time = event.timestamp();
-                //         caps_remap.on_hold
-                //     }
-                //     _ => Key::KEY_RESERVED,
-                // };
-
-                virtual_device.emit(&[InputEvent::new(
-                    event.event_type(),
-                    key.code(),
-                    event.value(),
-                )])?;
-            } else {
-                if caps_remap.held {
-                    interrupted = true;
-                    println!("{event:#?}");
-                    println!("interrupted");
-                }
-
-                virtual_device.emit(&[event])?;
+            for key_config in &mut key_configs {
+                handle_event(event, key_config, virtual_device).await?;
             }
         }
         sleep(Duration::from_millis(10)).await;
     }
 }
 
-pub fn pick_device() -> evdev::Device {
+async fn handle_event(
+    event: InputEvent,
+    config: &mut KeyConfig,
+    device: &mut VirtualDevice,
+) -> io::Result<()> {
+    if event.code() == config.key.code() {
+        process_capslock_event(event, config, device).await?;
+    } else {
+        if config.held {
+            config.interrupted = true;
+        }
+        device.emit(&[event])?;
+    }
+    Ok(())
+}
+
+async fn process_capslock_event(
+    event: InputEvent,
+    config: &mut KeyConfig,
+    device: &mut VirtualDevice,
+) -> io::Result<()> {
+    match event.value() {
+        1 => {
+            emit_key_event(device, config.on_hold, 1).await?;
+            config.time_pressed = Some(SystemTime::now());
+            config.held = true;
+        }
+        0 => {
+            config.time_pressed = None;
+            config.held = false;
+            await_key_release(config, device).await?
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn await_key_release(config: &mut KeyConfig, device: &mut VirtualDevice) -> io::Result<()> {
+    if config.held {
+        config.held = false;
+        emit_key_event(device, config.on_hold, 0).await?;
+        return Ok(());
+    }
+    if !config.interrupted {
+        emit_key_event(device, config.on_tap, 1).await?;
+        emit_key_event(device, config.on_tap, 0).await?;
+    } else {
+        config.interrupted = false;
+    }
+    Ok(())
+}
+
+async fn emit_key_event(device: &mut VirtualDevice, key: Key, value: i32) -> io::Result<()> {
+    device.emit(&[InputEvent::new(evdev::EventType(0x01), key.code(), value)])?;
+    Ok(())
+}
+#[derive(Debug)]
+struct KeyConfig {
+    key: Key,
+    on_tap: Key,
+    on_hold: Key,
+    held: bool,
+    interrupted: bool,
+    time_pressed: Option<SystemTime>,
+}
+
+async fn pick_device() -> evdev::Device {
     use std::io::prelude::*;
 
     let mut args = std::env::args_os();
@@ -160,20 +168,4 @@ pub fn pick_device() -> evdev::Device {
     }
 }
 
-#[derive(Debug)]
-struct KeyConfig {
-    key: Key,
-    on_tap: Key,
-    on_hold: Key,
-    held: bool,
-    start_time: SystemTime,
-}
-
-fn key_down(d: &mut VirtualDevice, key: Key) -> std::io::Result<()> {
-    d.emit(&[InputEvent::new(evdev::EventType(0x01), key.code(), 1)])?;
-    Ok(())
-}
-fn key_up(d: &mut VirtualDevice, key: Key) -> std::io::Result<()> {
-    d.emit(&[InputEvent::new(evdev::EventType(0x01), key.code(), 0)])?;
-    Ok(())
-}
+// The select_physical_device and KeyConfig struct definitions remain the same as in the original code.
