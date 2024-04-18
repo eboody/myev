@@ -1,0 +1,12 @@
+[Unit]
+Description=Dual Function Keys Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/myev /dev/input/by-id/usb-BY_Tech_Air75-event-kbd
+User=root
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

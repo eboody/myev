@@ -10,6 +10,15 @@ use tokio::time::sleep;
 
 static HOLD_TIMEOUT: Duration = Duration::from_millis(200);
 
+#[derive(Debug)]
+struct KeyConfig {
+    key: Key,
+    on_tap: Key,
+    on_hold: Key,
+    interrupted: bool,
+    time_pressed: Option<SystemTime>,
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let mut physical_device = pick_device().await;
@@ -21,6 +30,46 @@ async fn main() -> io::Result<()> {
     let key_configs = initialize_key_config();
 
     event_loop(&mut physical_device, &mut virtual_device, key_configs).await
+}
+
+async fn process_custom_key_event(
+    event: InputEvent,
+    config: &mut KeyConfig,
+    device: &mut VirtualDevice,
+) -> io::Result<()> {
+    match event.value() {
+        1 => {
+            emit_key_event(device, config.on_hold, 1).await?;
+            config.time_pressed = Some(SystemTime::now());
+        }
+        0 => {
+            emit_key_event(device, config.on_hold, 0).await?;
+
+            let duration_held = SystemTime::now()
+                .duration_since(config.time_pressed.unwrap())
+                .unwrap();
+
+            let condition_for_tap_met = (duration_held < HOLD_TIMEOUT) && !config.interrupted;
+
+            if condition_for_tap_met {
+                tap(device, config.on_tap).await?;
+            }
+
+            config.time_pressed = None;
+            config.interrupted = false;
+        }
+        _ => {}
+    }
+    // println!("{config:#?}");
+    Ok(())
+}
+
+async fn tap(device: &mut VirtualDevice, key: Key) -> io::Result<()> {
+    emit_key_event(device, key, 1).await?;
+    sleep(Duration::from_millis(10)).await;
+    emit_key_event(device, key, 0).await?;
+
+    Ok(())
 }
 
 fn gather_supported_keys(device: &Device) -> io::Result<AttributeSet<Key>> {
@@ -110,50 +159,9 @@ async fn handle_event(
     Ok(())
 }
 
-async fn process_custom_key_event(
-    event: InputEvent,
-    config: &mut KeyConfig,
-    device: &mut VirtualDevice,
-) -> io::Result<()> {
-    match event.value() {
-        1 => {
-            emit_key_event(device, config.on_hold, 1).await?;
-            config.time_pressed = Some(SystemTime::now());
-        }
-        0 => {
-            let duration_held = SystemTime::now()
-                .duration_since(config.time_pressed.unwrap())
-                .unwrap();
-
-            emit_key_event(device, config.on_hold, 0).await?;
-
-            if duration_held < HOLD_TIMEOUT {
-                if !config.interrupted {
-                    emit_key_event(device, config.on_tap, 1).await?;
-                    sleep(Duration::from_millis(10)).await;
-                    emit_key_event(device, config.on_tap, 0).await?;
-                }
-            }
-            config.time_pressed = None;
-            config.interrupted = false;
-        }
-        _ => {}
-    }
-    // println!("{config:#?}");
-    Ok(())
-}
-
 async fn emit_key_event(device: &mut VirtualDevice, key: Key, value: i32) -> io::Result<()> {
     device.emit(&[InputEvent::new(evdev::EventType(0x01), key.code(), value)])?;
     Ok(())
-}
-#[derive(Debug)]
-struct KeyConfig {
-    key: Key,
-    on_tap: Key,
-    on_hold: Key,
-    interrupted: bool,
-    time_pressed: Option<SystemTime>,
 }
 
 async fn pick_device() -> evdev::Device {
