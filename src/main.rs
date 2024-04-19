@@ -51,6 +51,7 @@ async fn process_custom_key_event(
 
             let condition_for_tap_met = (duration_held < HOLD_TIMEOUT) && !config.interrupted;
 
+            println!("condition_for_tap_met: {condition_for_tap_met}\nduration_held {duration_held:#?}\ninterrupted: {:#?}", config.interrupted);
             if condition_for_tap_met {
                 tap(device, config.on_tap).await?;
             }
@@ -60,7 +61,7 @@ async fn process_custom_key_event(
         }
         _ => {}
     }
-    // println!("{config:#?}");
+    println!("{config:#?}");
     Ok(())
 }
 
@@ -143,11 +144,12 @@ async fn handle_event(
     // if event is not in keyconfigs, but a keyconfig is held down, set it to interrupted
     for config in key_configs {
         if config.time_pressed.is_some() {
-            if event.kind() != InputEventKind::Misc(MiscType::MSC_SCAN)
-                || event.kind()
-                    != InputEventKind::Synchronization(evdev::Synchronization::SYN_REPORT)
-            {
-                // println!("{event:#?}");
+            let not_sync_or_scan_event = event.kind() != InputEventKind::Misc(MiscType::MSC_SCAN)
+                && event.kind()
+                    != InputEventKind::Synchronization(evdev::Synchronization::SYN_REPORT);
+
+            if not_sync_or_scan_event {
+                println!("{event:#?}");
                 config.interrupted = true;
             }
         }
