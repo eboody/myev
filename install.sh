@@ -19,7 +19,7 @@ sudo mv "./target/release/$BINARY_NAME" "/usr/local/bin/$BINARY_NAME"
 # Copy the systemd service file to /etc/systemd/system.
 # Ensure the service file name is correct and located in your project directory.
 echo "Installing systemd service file..."
-sudo cp "./$SERVICE_FILE" "/etc/systemd/system/$SERVICE_FILE"
+sudo cp -f "./$SERVICE_FILE" "/etc/systemd/system/$SERVICE_FILE"
 
 # Reload systemd to recognize the new service.
 sudo systemctl daemon-reload

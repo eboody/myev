@@ -10,7 +10,6 @@ use tokio::time::sleep;
 
 static HOLD_TIMEOUT: Duration = Duration::from_millis(200);
 
-#[derive(Debug)]
 struct KeyConfig {
     key: Key,
     on_tap: Key,
@@ -61,7 +60,7 @@ async fn process_custom_key_event(
         }
         _ => {}
     }
-    println!("{config:#?}");
+    // println!("{config:#?}");
     Ok(())
 }
 
@@ -149,8 +148,22 @@ async fn handle_event(
                     != InputEventKind::Synchronization(evdev::Synchronization::SYN_REPORT);
 
             if not_sync_or_scan_event {
-                println!("{event:#?}");
-                config.interrupted = true;
+                println!("EVENT: {event:#?}");
+                //FIXME: this should be in a separate function. just me compensating for being an
+                //idiot.
+                if event.kind() == InputEventKind::Key(Key::KEY_RIGHTSHIFT) {
+                    config.interrupted = false;
+                    emit_key_event(device, Key::KEY_ESC, 1).await?;
+                    sleep(Duration::from_millis(10)).await;
+                    emit_key_event(device, Key::KEY_ESC, 0).await?;
+                } else if event.kind() == InputEventKind::Key(Key::KEY_ESC) && config.interrupted {
+                    config.interrupted = false;
+                    emit_key_event(device, Key::KEY_ESC, 1).await?;
+                    sleep(Duration::from_millis(10)).await;
+                    emit_key_event(device, Key::KEY_ESC, 0).await?;
+                } else {
+                    config.interrupted = true;
+                }
             }
         }
     }
