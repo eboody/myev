@@ -153,6 +153,8 @@ async fn handle_event(
                 //idiot.
                 if event.kind() == InputEventKind::Key(Key::KEY_RIGHTSHIFT) {
                     config.interrupted = false;
+
+                    emit_key_event(device, Key::KEY_RIGHTSHIFT, 0).await?;
                     emit_key_event(device, Key::KEY_ESC, 1).await?;
                     sleep(Duration::from_millis(10)).await;
                     emit_key_event(device, Key::KEY_ESC, 0).await?;

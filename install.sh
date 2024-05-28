@@ -14,6 +14,7 @@ SERVICE_FILE="myev.service"
 # Move the binary to /usr/local/bin.
 # You might need to change this path based on your requirements or system conventions.
 echo "Moving binary to /usr/local/bin..."
+sudo rm "/usr/local/bin/$BINARY_NAME"
 sudo mv "./target/release/$BINARY_NAME" "/usr/local/bin/$BINARY_NAME"
 
 # Copy the systemd service file to /etc/systemd/system.
