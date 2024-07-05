@@ -121,6 +121,8 @@ async fn event_loop(
 ) -> io::Result<()> {
     loop {
         for event in physical_device.fetch_events()?.into_iter() {
+            println!("EVENT: {:#?}", event);
+
             handle_event(event, &mut key_configs, virtual_device).await?;
         }
         sleep(Duration::from_millis(10)).await;
