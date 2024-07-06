@@ -1,9 +1,10 @@
 # Key Remapper
 
-Key Remapper is a powerful and flexible tool for remapping keyboard keys on Linux systems. It allows you to customize your keyboard layout, create complex key mappings, and enhance your typing experience.
+Key Remapper is a powerful and flexible tool for remapping keyboard keys on Linux systems with an emphasis on Wayland support. It allows you to customize your keyboard layout, create complex key mappings, and enhance your typing experience.
 
 ## Features
 
+- Wayland support
 - Remap any key to another key
 - Configure different actions for tap and hold events
 - Easy-to-use TOML configuration file
@@ -22,8 +23,8 @@ Before you begin, ensure you have the following installed on your Linux system:
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/key-remapper.git
-   cd key-remapper
+   git clone https://github.com/eboody/myev.git
+   cd myev
    ```
 
 2. Build the project:
@@ -63,7 +64,7 @@ For a full list of available key names, refer to the `evdev-key-names.md` file i
 
 2. Run Key Remapper with root privileges:
    ```
-   sudo ./key-remapper
+   sudo ./myev
    ```
 
 3. The program will display a list of available input devices. Enter the number corresponding to the keyboard you want to remap.
