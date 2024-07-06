@@ -9,3 +9,4 @@ edition = "2021"
 evdev = { version = "0.12.2", features = ["serde", "tokio"] }
 tokio = { version = "1.38.0", features = ["macros", "rt-multi-thread", "time"] }
 toml = "0.8.14"
+serde = { version = "1.0", features = ["derive"] }

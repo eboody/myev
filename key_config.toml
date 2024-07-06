@@ -1,0 +1,4 @@
+[[ key_mappings ]]
+key = "KEY_CAPSLOCK"
+on_tap = "KEY_ESC"
+on_hold = "KEY_LEFTMETA"

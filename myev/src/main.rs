@@ -2,18 +2,42 @@ use evdev::{
     uinput::{VirtualDevice, VirtualDeviceBuilder},
     AttributeSet, Device, FetchEventsSynced, InputEvent, InputEventKind, Key, MiscType,
 };
+use serde::Deserialize;
+use std::str::FromStr;
 use std::{
-    io,
+    fs, io,
     time::{Duration, SystemTime},
 };
 use tokio::time::sleep;
+use toml;
 
 const HOLD_TIMEOUT: Duration = Duration::from_millis(200);
+const CONFIG_FILE: &str = "/home/eran/code/myev/key_config.toml";
 
-#[derive(Debug, Clone, Copy)]
-enum KeyAction {
-    Tap,
-    Hold,
+#[tokio::main]
+async fn main() -> io::Result<()> {
+    let config = load_config()?;
+    let mut remapper = KeyRemapper::new(config).await?;
+    remapper.run().await
+}
+
+fn load_config() -> io::Result<Config> {
+    let config_str = fs::read_to_string(CONFIG_FILE)?;
+    let config: Config =
+        toml::from_str(&config_str).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    Ok(config)
+}
+
+#[derive(Deserialize)]
+struct Config {
+    key_mappings: Vec<KeyMapping>,
+}
+
+#[derive(Deserialize)]
+struct KeyMapping {
+    key: String,
+    on_tap: String,
+    on_hold: String,
 }
 
 struct KeyConfig {
@@ -94,18 +118,24 @@ struct KeyRemapper {
 }
 
 impl KeyRemapper {
-    async fn new() -> io::Result<Self> {
+    async fn new(config: Config) -> io::Result<Self> {
         let mut physical_device = select_physical_device().await;
         let supported_keys = gather_supported_keys(&physical_device)?;
         let virtual_device = create_virtual_device(&supported_keys).await?;
 
         prevent_physical_device_input(&mut physical_device).await?;
 
-        let key_configs = vec![KeyConfig::new(
-            Key::KEY_CAPSLOCK,
-            Key::KEY_ESC,
-            Key::KEY_LEFTMETA,
-        )];
+        let key_configs = config
+            .key_mappings
+            .into_iter()
+            .map(|mapping| {
+                KeyConfig::new(
+                    Key::from_str(&mapping.key).unwrap(),
+                    Key::from_str(&mapping.on_tap).unwrap(),
+                    Key::from_str(&mapping.on_hold).unwrap(),
+                )
+            })
+            .collect();
 
         Ok(Self {
             physical_device,
@@ -187,12 +217,6 @@ impl KeyRemapper {
         self.virtual_device.emit(&[event])?;
         Ok(())
     }
-}
-
-#[tokio::main]
-async fn main() -> io::Result<()> {
-    let mut remapper = KeyRemapper::new().await?;
-    remapper.run().await
 }
 
 async fn tap(device: &mut VirtualDevice, key: Key) -> io::Result<()> {

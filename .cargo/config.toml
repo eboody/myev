@@ -1,2 +1,1 @@
-[alias]
-r = "script runme.sh"
+[env]

@@ -1,21 +1,21 @@
-use evdev::{enumerate, Device};
+use evdev::Device;
 use std::fs;
-use std::io::{self, Write};
-use std::path::Path;
+use std::io::{self};
+use std::path::PathBuf;
 use std::process::Command;
 
 const SERVICE_FILE_PATH: &str = "/etc/systemd/system/myev.service";
-const BINARY_PATH: &str = "/usr/local/bin/myev";
+const BINARY_PATH: &str = "/usr/bin/myev";
 
 fn main() -> io::Result<()> {
-    println!("Building project...");
-    build_project()?;
+    // println!("Building project...");
+    // build_project()?;
 
     println!("Selecting input device...");
-    let device_path = select_physical_device()?;
+    let device = select_physical_device();
 
     println!("Creating service file...");
-    create_service_file(&device_path)?;
+    create_service_file(device)?;
 
     println!("Installing binary...");
     install_binary()?;
@@ -27,58 +27,46 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn build_project() -> io::Result<()> {
-    let output = Command::new("cargo")
-        .args(&["build", "--release"])
-        .output()?;
+// fn build_project() -> io::Result<()> {
+//     let output = Command::new("cargo")
+//         .args(&["build", "--release"])
+//         .output()?;
+//
+//     if !output.status.success() {
+//         return Err(io::Error::new(
+//             io::ErrorKind::Other,
+//             "Failed to build project",
+//         ));
+//     }
+//     Ok(())
+// }
 
-    if !output.status.success() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Failed to build project",
-        ));
+fn select_physical_device() -> Device {
+    use std::io::prelude::*;
+
+    let mut args = std::env::args_os();
+    args.next();
+    if let Some(dev_file) = args.next() {
+        Device::open(dev_file).unwrap()
+    } else {
+        let mut devices = evdev::enumerate().map(|t| t.1).collect::<Vec<_>>();
+        devices.reverse();
+        for (i, d) in devices.iter().enumerate() {
+            println!("{}: {}", i, d.name().unwrap_or("Unnamed device"));
+        }
+        print!("Select the device [0-{}]: ", devices.len());
+        let _ = std::io::stdout().flush();
+        let mut chosen = String::new();
+        std::io::stdin().read_line(&mut chosen).unwrap();
+        let n = chosen.trim().parse::<usize>().unwrap();
+        devices.into_iter().nth(n).unwrap()
     }
-    Ok(())
 }
 
-fn select_physical_device() -> io::Result<String> {
-    let mut devices: Vec<_> = enumerate().map(|(_, d)| d).collect();
-    devices.reverse();
-
-    for (i, d) in devices.iter().enumerate() {
-        println!(
-            "{}: {} ({:?})",
-            i,
-            d.name().unwrap_or("Unnamed device"),
-            d.phys()
-        );
-    }
-
-    print!("Select the device [0-{}]: ", devices.len() - 1);
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let index: usize = input
-        .trim()
-        .parse()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "Invalid input"))?;
-
-    if index >= devices.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Invalid device index",
-        ));
-    }
-
-    let selected_device = &devices[index];
-    Ok(selected_device.phys().unwrap_or_default().to_string())
-}
-
-fn create_service_file(device_path: &str) -> io::Result<()> {
+fn create_service_file(device: Device) -> io::Result<()> {
     let service_content = format!(
         r#"[Unit]
-Description=Dual Function Keys Service
+Description=Key Remapping Service
 After=network.target
 
 [Service]
@@ -90,8 +78,14 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 "#,
-        BINARY_PATH, device_path
+        BINARY_PATH,
+        find_device_path(&device)
+            .expect("Expected to be able to find the path to device")
+            .to_str()
+            .expect("Expected to be able to turn pathbuf into a string")
     );
+
+    println!("{service_content}");
 
     fs::write(SERVICE_FILE_PATH, service_content)?;
     Ok(())
@@ -114,4 +108,37 @@ fn configure_systemd_service() -> io::Result<()> {
         .args(&["start", "myev.service"])
         .status()?;
     Ok(())
+}
+
+fn find_device_path(device: &Device) -> io::Result<PathBuf> {
+    let device_name = device.name().unwrap_or("Unknown");
+    let phys_path = device.physical_path().unwrap_or("Unknown");
+
+    // Check in /dev/input/by-path first
+    if let Ok(entries) = fs::read_dir("/dev/input/by-path") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Ok(dev) = Device::open(&path) {
+                if dev.name() == device.name() && dev.physical_path() == device.physical_path() {
+                    return Ok(path);
+                }
+            }
+        }
+    }
+    // If not found in by-path, check in /dev/input/by-id
+    if let Ok(entries) = fs::read_dir("/dev/input/by-id") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Ok(dev) = Device::open(&path) {
+                if dev.name() == device.name() && dev.physical_path() == device.physical_path() {
+                    return Ok(path);
+                }
+            }
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("Device path not found for {} ({})", device_name, phys_path),
+    ))
 }

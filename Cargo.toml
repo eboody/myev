@@ -5,6 +5,5 @@ members = [
   "myev-installer"
 ]
 
-# [package.metadata.scripts]
-# devbuild = "cargo build --release && cp ./target/release/myev . && sudo myev"
-# devrun = "cargo build --release && sudo ./target/release/myev"
+[workspace.metadata.scripts]
+devrun = "cargo build --release && sudo ./target/release/myev"
