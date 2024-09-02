@@ -159,7 +159,7 @@ impl KeyRemapper {
     }
 
     async fn handle_event(&mut self, event: InputEvent) -> io::Result<()> {
-        println!("EVENT: {:#?}", event);
+        // println!("EVENT: {:#?}", event);
 
         let mut handled = false;
         for config in &mut self.key_configs {

@@ -7,3 +7,4 @@ members = [
 
 [workspace.metadata.scripts]
 devrun = "cargo build --release && sudo ./target/release/myev"
+install = "sudo ./target/release/myev-installer"
